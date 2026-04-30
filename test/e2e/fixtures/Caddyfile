@@ -1,0 +1,5 @@
+:80 {
+	reverse_proxy app:9000 {
+		transport fastcgi
+	}
+}

@@ -1,0 +1,94 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # FastCGI application (the library under test)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: ../../
+      dockerfile: test/e2e/Dockerfile
+      target: fcgi-app
+    healthcheck:
+      # Use Node itself (always present in the image) to probe the TCP port
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - >
+          require('net')
+            .createConnection(9000, '127.0.0.1')
+            .on('connect', () => process.exit(0))
+            .on('error',   () => process.exit(1))
+      interval: 1s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  # ---------------------------------------------------------------------------
+  # nginx — HTTP front-end that proxies to the FastCGI app
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./fixtures/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      # wget is available in nginx:alpine; --spider just checks reachability
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/hello"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # caddy — modern HTTP front-end that proxies via FastCGI transport
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    volumes:
+      - ./fixtures/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/hello"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # apache — httpd with mod_proxy_fcgi
+  # ---------------------------------------------------------------------------
+  apache:
+    image: httpd:2.4-alpine
+    volumes:
+      - ./fixtures/apache.conf:/usr/local/apache2/conf/httpd.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/hello"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # test runner — vitest E2E suite
+  # ---------------------------------------------------------------------------
+  test:
+    build:
+      context: ../../
+      dockerfile: test/e2e/Dockerfile
+      target: e2e-test
+    environment:
+      NGINX_URL:  "http://nginx"
+      CADDY_URL:  "http://caddy"
+      APACHE_URL: "http://apache"
+    depends_on:
+      nginx:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+      apache:
+        condition: service_healthy
