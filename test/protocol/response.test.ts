@@ -7,9 +7,9 @@ function fakeSocket(): { socket: Socket; chunks: Buffer[] } {
 	const chunks: Buffer[] = [];
 	const socket = {
 		destroyed: false,
-		write(buf: Buffer, cb: (err?: Error | null) => void) {
-			chunks.push(buf);
-			queueMicrotask(() => cb(null));
+		write(buf: Buffer, cb?: (err?: Error | null) => void) {
+			chunks.push(Buffer.from(buf)); // copy so later mutations to hdr don't affect recorded chunks
+			if (cb) queueMicrotask(() => cb(null));
 			return true;
 		},
 	} as unknown as Socket;

@@ -64,23 +64,9 @@ export function buildRequest(state: RequestState): Request {
 	// ------------------------------------------------------------------
 	// Headers
 	// ------------------------------------------------------------------
-	const headers = new Headers();
-
-	for (const [key, value] of params) {
-		if (key.startsWith("HTTP_")) {
-			// HTTP_X_FORWARDED_FOR → x-forwarded-for
-			const headerName = key.slice(5).toLowerCase().replaceAll("_", "-");
-			headers.append(headerName, value);
-		}
-	}
-
-	const contentType = params.get("CONTENT_TYPE");
-	if (contentType) headers.set("content-type", contentType);
-
-	const contentLength = params.get("CONTENT_LENGTH");
-	if (contentLength !== undefined && /^\d+$/.test(contentLength)) {
-		headers.set("content-length", contentLength);
-	}
+	// Headers are pre-built during PARAMS accumulation in FcgiConnection,
+	// eliminating the need to scan the full params map here.
+	const headers = state.httpHeaders;
 
 	// ------------------------------------------------------------------
 	// Body

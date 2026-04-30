@@ -14,8 +14,7 @@
 import { STATUS_CODES } from "node:http";
 import type { Socket } from "node:net";
 import type { FcgiConnection, RequestState } from "./protocol/connection.js";
-import { ProtocolStatus, RecordType } from "./protocol/constants.js";
-import { encodeRecord } from "./protocol/record.js";
+import { FCGI_HEADER_LEN, FCGI_VERSION_1, ProtocolStatus, RecordType } from "./protocol/constants.js";
 
 /** Max content bytes in a single FCGI_STDOUT record. */
 const MAX_CONTENT_LENGTH = 65535;
@@ -107,8 +106,16 @@ export async function writeResponse(
 
 	// ------------------------------------------------------------------
 	// Empty STDOUT to terminate the stream (spec sec 6.1)
+	// An empty record has zero content and zero padding: exactly 8 bytes.
 	// ------------------------------------------------------------------
-	await socketWrite(socket, encodeRecord(RecordType.STDOUT, requestId, Buffer.alloc(0)));
+	const emptyStdout = Buffer.allocUnsafe(FCGI_HEADER_LEN);
+	emptyStdout[0] = FCGI_VERSION_1;
+	emptyStdout[1] = RecordType.STDOUT;
+	emptyStdout.writeUInt16BE(requestId, 2);
+	emptyStdout.writeUInt16BE(0, 4); // contentLength = 0
+	emptyStdout[6] = 0; // paddingLength = 0
+	emptyStdout[7] = 0; // reserved
+	await socketWrite(socket, emptyStdout);
 	if (state.ended) return;
 
 	// ------------------------------------------------------------------
@@ -130,14 +137,36 @@ export async function writeStderr(
 	if (message.length === 0) return; // honor "no terminator when nothing to write"
 	const data = Buffer.from(message, "utf8");
 	await writeChunked(socket, requestId, data, RecordType.STDERR);
-	await socketWrite(socket, encodeRecord(RecordType.STDERR, requestId, Buffer.alloc(0)));
+	const emptyStderr = Buffer.allocUnsafe(FCGI_HEADER_LEN);
+	emptyStderr[0] = FCGI_VERSION_1;
+	emptyStderr[1] = RecordType.STDERR;
+	emptyStderr.writeUInt16BE(requestId, 2);
+	emptyStderr.writeUInt16BE(0, 4);
+	emptyStderr[6] = 0;
+	emptyStderr[7] = 0;
+	await socketWrite(socket, emptyStderr);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Split `data` into FCGI records of at most MAX_CONTENT_LENGTH bytes. */
+/**
+ * Split `data` into FCGI records of at most MAX_CONTENT_LENGTH bytes and write
+ * them to `socket` without copying content into an intermediate record Buffer.
+ *
+ * Each record is written as two consecutive socket.write() calls:
+ *   1. An 8-byte record header (fresh 8-byte Buffer per chunk — never the content size)
+ *   2. The content slice (zero-copy subarray of `data`)
+ *
+ * The main saving over encodeRecord() is that content bytes are never copied into
+ * a combined buffer — they flow from `data` directly to the socket write queue.
+ * Node.js's internal stream buffering batches the two writes efficiently.
+ *
+ * Backpressure is signalled by the content write (the larger of the two), which
+ * is awaited via socketWrite. The header write (8 bytes) is fire-and-forget;
+ * any error it produces is surfaced via the socket's 'error' event.
+ */
 async function writeChunked(
 	socket: Socket,
 	requestId: number,
@@ -145,25 +174,42 @@ async function writeChunked(
 	type: RecordType = RecordType.STDOUT,
 ): Promise<void> {
 	if (data.length === 0) return;
+
 	let offset = 0;
 	while (offset < data.length) {
 		const slice = data.subarray(offset, offset + MAX_CONTENT_LENGTH);
-		await socketWrite(socket, encodeRecord(type, requestId, slice));
+
+		// Fresh 8-byte header per chunk — socket.write() keeps a reference and does
+		// not copy immediately, so reusing a single buffer across iterations under
+		// backpressure would corrupt queued data.
+		const hdr = Buffer.allocUnsafe(FCGI_HEADER_LEN);
+		hdr[0] = FCGI_VERSION_1;
+		hdr[1] = type;
+		hdr.writeUInt16BE(requestId, 2);
+		hdr.writeUInt16BE(slice.length, 4);
+		hdr[6] = 0; // paddingLength = 0 (spec: "need not be padded")
+		hdr[7] = 0; // reserved
+
+		socket.write(hdr);
+		await socketWrite(socket, slice);
+
 		offset += slice.length;
 	}
 }
 
 function stripCTL(value: string): string {
-	// Strip CR, LF, NUL, all C0 controls except HT (\t), and DEL.
-	return [...value]
-		.filter((ch) => {
-			const c = ch.codePointAt(0) ?? 0;
-			if (c <= 8) return false;
-			if (c >= 10 && c <= 31) return false;
-			if (c === 127) return false;
-			return true;
-		})
-		.join("");
+	// Fast path: scan for CTL chars before allocating anything.
+	// In production header values never contain CTL chars, so this returns the
+	// original string reference with zero allocation in the common case.
+	for (let i = 0; i < value.length; i++) {
+		const c = value.charCodeAt(i);
+		if (c <= 8 || (c >= 10 && c <= 31) || c === 127) {
+			// Slow path: strip CR, LF, NUL, C0 controls (except HT \t = 9), and DEL.
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping CTL chars is the intent
+			return value.replace(/[\x00-\x08\x0a-\x1f\x7f]/g, "");
+		}
+	}
+	return value;
 }
 
 /** Write a buffer to the socket, waiting for drain if backpressure applies. */

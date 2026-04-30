@@ -15,8 +15,7 @@
  */
 
 import { ProtocolError } from "../errors.js";
-import type { RecordType } from "./constants.js";
-import { FCGI_HEADER_LEN, FCGI_VERSION_1 } from "./constants.js";
+import { FCGI_HEADER_LEN, FCGI_VERSION_1, RecordType } from "./constants.js";
 
 /** Parsed representation of a single FastCGI record. */
 export interface FcgiRecord {
@@ -208,8 +207,16 @@ export class RecordParser {
 				const needed = this.currentContentLength + this.currentPaddingLength;
 				if (this.totalBytes < needed) return;
 
-				// Always copy contentData so callers can safely retain a reference
-				const contentData = Buffer.from(this.readBytes(this.currentContentLength));
+				// PARAMS and STDIN records are retained by callers (accumulated into Maps /
+				// enqueued into ReadableStreams), so they always need an owned copy.
+				// All other record types are consumed synchronously and can safely use a
+				// zero-copy subarray of the existing chunk buffer.
+				const raw = this.readBytes(this.currentContentLength);
+				const contentData =
+					this.currentType === RecordType.PARAMS ||
+					this.currentType === RecordType.STDIN
+						? Buffer.from(raw)
+						: raw;
 				this.skipBytes(this.currentPaddingLength);
 				this.state = "header";
 

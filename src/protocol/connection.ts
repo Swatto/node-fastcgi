@@ -17,6 +17,7 @@ import {
 	FCGI_MAX_REQS,
 	FCGI_MPXS_CONNS,
 	FCGI_NULL_REQUEST_ID,
+	FCGI_VERSION_1,
 	ProtocolStatus,
 	RecordType,
 	Role,
@@ -34,6 +35,14 @@ export interface RequestState {
 	role: number;
 	keepConn: boolean;
 	params: Map<string, string>;
+	/**
+	 * HTTP request headers pre-built from PARAMS during accumulation.
+	 * HTTP_* CGI variables are translated to their header names
+	 * (e.g. HTTP_X_REQUEST_ID → x-request-id) and CONTENT_TYPE /
+	 * CONTENT_LENGTH are included. Avoids a second full scan of `params`
+	 * inside `buildRequest`.
+	 */
+	httpHeaders: Headers;
 	paramsComplete: boolean;
 	/** Push raw STDIN bytes into the body stream. */
 	pushStdin: (chunk: Buffer) => void;
@@ -116,6 +125,28 @@ export class FcgiConnection {
 
 	/** Request IDs for which END_REQUEST was already written (idempotent `sendEndRequest`). Cleared on socket close; see `handleBeginRequest`. */
 	private readonly endedRequestIds = new Set<number>();
+
+	/**
+	 * Reusable 16-byte buffer for FCGI_END_REQUEST records.
+	 * END_REQUEST is always exactly 16 bytes (8-byte header + 8-byte body, no padding).
+	 * Only bytes 2–3 (requestId), 8–11 (appStatus), and 12 (protocolStatus) vary per call.
+	 * Allocated once per connection to avoid two Buffer.allocUnsafe calls per request.
+	 */
+	private readonly endRequestBuf: Buffer = (() => {
+		const buf = Buffer.allocUnsafe(16);
+		buf[0] = FCGI_VERSION_1;
+		buf[1] = RecordType.END_REQUEST;
+		// bytes 2-3: requestId — written per call
+		buf.writeUInt16BE(8, 4); // contentLength = 8
+		buf[6] = 0; // paddingLength = 0
+		buf[7] = 0; // reserved
+		// bytes 8-11: appStatus — written per call
+		// byte 12: protocolStatus — written per call
+		buf[13] = 0;
+		buf[14] = 0;
+		buf[15] = 0;
+		return buf;
+	})();
 
 	constructor(socket: Socket, callbacks: ConnectionCallbacks) {
 		this.socket = socket;
@@ -287,6 +318,7 @@ export class FcgiConnection {
 			role,
 			keepConn,
 			params: new Map(),
+			httpHeaders: new Headers(),
 			paramsComplete: false,
 			stdinStream,
 			abortSignal: stdinAbort.signal,
@@ -379,9 +411,20 @@ export class FcgiConnection {
 			return;
 		}
 
-		let pairs: Map<string, string>;
 		try {
-			pairs = decodeNameValues(contentData);
+			decodeNameValues(contentData, req.params, (name, value) => {
+				if (name.startsWith("HTTP_")) {
+					// HTTP_X_FORWARDED_FOR → x-forwarded-for
+					req.httpHeaders.append(
+						name.slice(5).toLowerCase().replaceAll("_", "-"),
+						value,
+					);
+				} else if (name === "CONTENT_TYPE") {
+					req.httpHeaders.set("content-type", value);
+				} else if (name === "CONTENT_LENGTH" && /^\d+$/.test(value)) {
+					req.httpHeaders.set("content-length", value);
+				}
+			});
 		} catch (e) {
 			const err =
 				e instanceof ProtocolError
@@ -392,7 +435,7 @@ export class FcgiConnection {
 			return;
 		}
 
-		if (req.params.size + pairs.size > maxParamsCount) {
+		if (req.params.size > maxParamsCount) {
 			const err = new ProtocolError(
 				`PARAMS pair count limit exceeded for request ${req.requestId} ` +
 					`(limit: ${maxParamsCount})`,
@@ -402,9 +445,6 @@ export class FcgiConnection {
 			return;
 		}
 
-		for (const [k, v] of pairs) {
-			req.params.set(k, v);
-		}
 		req.paramsBytes += contentData.length;
 	}
 
@@ -449,13 +489,11 @@ export class FcgiConnection {
 		if (this.endedRequestIds.has(requestId)) return;
 		this.endedRequestIds.add(requestId);
 
-		const body = Buffer.allocUnsafe(8);
-		body.writeUInt32BE(appStatus, 0);
-		body[4] = protocolStatus;
-		body[5] = 0;
-		body[6] = 0;
-		body[7] = 0;
-		this.socketWrite(encodeRecord(RecordType.END_REQUEST, requestId, body));
+		// Fill the reusable template in-place: only the three varying fields change.
+		this.endRequestBuf.writeUInt16BE(requestId, 2);
+		this.endRequestBuf.writeUInt32BE(appStatus, 8);
+		this.endRequestBuf[12] = protocolStatus;
+		this.socketWrite(this.endRequestBuf);
 
 		const req = this.requests.get(requestId);
 		this.requests.delete(requestId);

@@ -2,12 +2,27 @@ import { describe, expect, it } from "vitest";
 import type { RequestState } from "../../src/protocol/connection.js";
 import { buildRequest } from "../../src/request.js";
 
+function buildHttpHeaders(params: Record<string, string>): Headers {
+	const headers = new Headers();
+	for (const [key, value] of Object.entries(params)) {
+		if (key.startsWith("HTTP_")) {
+			headers.append(key.slice(5).toLowerCase().replaceAll("_", "-"), value);
+		} else if (key === "CONTENT_TYPE") {
+			headers.set("content-type", value);
+		} else if (key === "CONTENT_LENGTH" && /^\d+$/.test(value)) {
+			headers.set("content-length", value);
+		}
+	}
+	return headers;
+}
+
 function makeState(params: Record<string, string>): RequestState {
 	return {
 		requestId: 1,
 		role: 1,
 		keepConn: false,
 		params: new Map(Object.entries(params)),
+		httpHeaders: buildHttpHeaders(params),
 		paramsComplete: true,
 		paramsBytes: 0,
 		ended: false,

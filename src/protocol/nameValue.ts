@@ -31,9 +31,23 @@ export function encodeNameValues(pairs: Map<string, string> | Record<string, str
 	return Buffer.concat(parts);
 }
 
-/** Decode all name-value pairs from a Buffer (e.g. the contentData of FCGI_PARAMS). */
-export function decodeNameValues(buf: Buffer): Map<string, string> {
-	const result = new Map<string, string>();
+/**
+ * Decode all name-value pairs from a Buffer (e.g. the contentData of FCGI_PARAMS).
+ *
+ * - When `into` is provided, pairs are accumulated directly into that Map and the
+ *   same Map is returned — avoids allocating a temporary Map and a merge loop at
+ *   the call site.
+ * - When `onEachPair` is provided, it is called for every decoded pair (after the
+ *   pair has been added to `into`). This allows a single decode pass to populate
+ *   multiple data structures (e.g. params Map + HTTP headers object) without
+ *   iterating the buffer twice.
+ */
+export function decodeNameValues(
+	buf: Buffer,
+	into?: Map<string, string>,
+	onEachPair?: (name: string, value: string) => void,
+): Map<string, string> {
+	const result = into ?? new Map<string, string>();
 	let offset = 0;
 
 	while (offset < buf.length) {
@@ -59,6 +73,7 @@ export function decodeNameValues(buf: Buffer): Map<string, string> {
 		offset += valueLen;
 
 		result.set(name, value);
+		onEachPair?.(name, value);
 	}
 
 	return result;
