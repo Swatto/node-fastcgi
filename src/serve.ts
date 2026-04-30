@@ -291,6 +291,9 @@ function handleConnection(socket: Socket, handler: Handler, options: ServeOption
 		...(options.maxBodyBytes !== undefined ? { maxBodyBytes: options.maxBodyBytes } : {}),
 		...(options.maxParamsBytes !== undefined ? { maxParamsBytes: options.maxParamsBytes } : {}),
 		...(options.maxParamsCount !== undefined ? { maxParamsCount: options.maxParamsCount } : {}),
+		...(options.maxConnections !== undefined
+			? { maxConcurrentConnections: options.maxConnections }
+			: {}),
 	});
 }
 

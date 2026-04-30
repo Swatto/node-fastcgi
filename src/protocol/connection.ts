@@ -82,6 +82,13 @@ export interface ConnectionCallbacks {
 	 * Default: unlimited.
 	 */
 	maxRequestsPerConnection?: number;
+
+	/**
+	 * Value advertised as FCGI_MAX_CONNS / FCGI_MAX_REQS in the GET_VALUES_RESULT
+	 * reply (spec §4.1). Defaults to 1024 when unset. Should reflect the real
+	 * concurrency the server is willing to accept.
+	 */
+	maxConcurrentConnections?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,8 +191,9 @@ export class FcgiConnection {
 		const query = decodeNameValues(contentData);
 		const response = new Map<string, string>();
 
-		if (query.has(FCGI_MAX_CONNS)) response.set(FCGI_MAX_CONNS, "1");
-		if (query.has(FCGI_MAX_REQS)) response.set(FCGI_MAX_REQS, "1");
+		const advertised = String(this.callbacks.maxConcurrentConnections ?? 1024);
+		if (query.has(FCGI_MAX_CONNS)) response.set(FCGI_MAX_CONNS, advertised);
+		if (query.has(FCGI_MAX_REQS)) response.set(FCGI_MAX_REQS, advertised);
 		if (query.has(FCGI_MPXS_CONNS)) response.set(FCGI_MPXS_CONNS, "0");
 
 		this.socketWrite(

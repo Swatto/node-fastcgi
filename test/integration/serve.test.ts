@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Handler, ServeResult } from "../../src/index.js";
 import { ConnectionDeniedError, HandlerError, ProtocolError, serve } from "../../src/index.js";
 import { FCGI_KEEP_CONN, ProtocolStatus, RecordType, Role } from "../../src/protocol/constants.js";
+import { decodeNameValues } from "../../src/protocol/nameValue.js";
 import { encodeRecord } from "../../src/protocol/record.js";
 import type { FcgiRecord } from "./helpers.js";
 import {
@@ -60,6 +61,38 @@ describe("serve() options validation", () => {
 		await expect(serve(handler, { socketPath: "/tmp/test.sock", inheritedFd: 0 })).rejects.toThrow(
 			TypeError,
 		);
+	});
+});
+
+describe("GET_VALUES advertised limits", () => {
+	it("defaults FCGI_MAX_CONNS and FCGI_MAX_REQS to 1024 when maxConnections is unset", async () => {
+		await startServer(async () => new Response("ok"), {});
+
+		const records = await sendAndCollect(port, getValuesRecord(), {
+			resolveWhen: (r) => r.type === RecordType.GET_VALUES_RESULT,
+		});
+		const reply = records.find((r) => r.type === RecordType.GET_VALUES_RESULT);
+		expect(reply).toBeDefined();
+		if (!reply) return;
+		const values = decodeNameValues(reply.contentData);
+		expect(values.get(FCGI_MAX_CONNS)).toBe("1024");
+		expect(values.get(FCGI_MAX_REQS)).toBe("1024");
+		expect(values.get(FCGI_MPXS_CONNS)).toBe("0");
+	});
+
+	it("honors serve() maxConnections for advertised limits", async () => {
+		await startServer(async () => new Response("ok"), { maxConnections: 50 });
+
+		const records = await sendAndCollect(port, getValuesRecord(), {
+			resolveWhen: (r) => r.type === RecordType.GET_VALUES_RESULT,
+		});
+		const reply = records.find((r) => r.type === RecordType.GET_VALUES_RESULT);
+		expect(reply).toBeDefined();
+		if (!reply) return;
+		const values = decodeNameValues(reply.contentData);
+		expect(values.get(FCGI_MAX_CONNS)).toBe("50");
+		expect(values.get(FCGI_MAX_REQS)).toBe("50");
+		expect(values.get(FCGI_MPXS_CONNS)).toBe("0");
 	});
 });
 
@@ -234,11 +267,10 @@ describe("serve() integration", () => {
 		expect(result).toBeDefined();
 
 		if (result) {
-			const { decodeNameValues } = await import("../../src/protocol/nameValue.js");
 			const values = decodeNameValues(result.contentData);
 			expect(values.get(FCGI_MPXS_CONNS)).toBe("0");
-			expect(values.get(FCGI_MAX_CONNS)).toBe("1");
-			expect(values.get(FCGI_MAX_REQS)).toBe("1");
+			expect(values.get(FCGI_MAX_CONNS)).toBe("1024");
+			expect(values.get(FCGI_MAX_REQS)).toBe("1024");
 		}
 	});
 

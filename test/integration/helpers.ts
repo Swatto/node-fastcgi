@@ -64,20 +64,53 @@ export function getValuesRecord(): Buffer {
 /**
  * Connect to `port`, send `data`, collect all records until the socket closes,
  * then resolve with the list.
+ *
+ * If `options.resolveWhen` is set, the client calls it for each parsed record and
+ * resolves (and destroys the socket) as soon as it returns true — useful when the
+ * server keeps the connection open after a management record such as GET_VALUES_RESULT.
  */
-export function sendAndCollect(port: number, data: Buffer): Promise<FcgiRecord[]> {
+export function sendAndCollect(
+	port: number,
+	data: Buffer,
+	options?: { resolveWhen?: (record: FcgiRecord) => boolean },
+): Promise<FcgiRecord[]> {
 	return new Promise((resolve, reject) => {
 		const records: FcgiRecord[] = [];
-		const parser = new RecordParser((r) => records.push(r));
-		const socket = net.createConnection({ port, host: "127.0.0.1" }, () => {
+		let settled = false;
+		let socket!: net.Socket;
+		let timer!: NodeJS.Timeout;
+
+		const settleResolve = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(records);
+		};
+
+		const settleReject = (err: Error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			reject(err);
+		};
+
+		const parser = new RecordParser((r) => {
+			records.push(r);
+			if (options?.resolveWhen?.(r)) {
+				settleResolve();
+				socket.destroy();
+			}
+		});
+
+		socket = net.createConnection({ port, host: "127.0.0.1" }, () => {
 			socket.write(data);
 		});
 		socket.on("data", (chunk: Buffer) => parser.push(chunk));
-		socket.on("end", () => resolve(records));
-		socket.on("error", reject);
-		setTimeout(() => {
+		socket.on("end", () => settleResolve());
+		socket.on("error", (err) => settleReject(err));
+		timer = setTimeout(() => {
 			socket.destroy();
-			reject(new Error("Timeout"));
+			settleReject(new Error("Timeout"));
 		}, 5000);
 	});
 }
