@@ -12,10 +12,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v4
+    - uses: pnpm/action-setup@v5
       # reads version from "packageManager" field in package.json
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v6
       with:
         node-version: ${{ inputs.node-version }}
         cache: pnpm
