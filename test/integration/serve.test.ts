@@ -674,6 +674,105 @@ describe("PARAMS edge cases", () => {
 	});
 });
 
+describe("STDIN-before-PARAMS-terminator", () => {
+	it("buffers STDIN that arrives before the PARAMS terminator", async () => {
+		await startServer(async (req) => {
+			const text = await req.text();
+			return new Response(`got:${text}`, { status: 200 });
+		});
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "POST",
+				REQUEST_URI: "/",
+				HTTP_HOST: `localhost:${port}`,
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+				CONTENT_LENGTH: "3",
+			}),
+			stdinRecord(1, "a"),
+			stdinRecord(1, "b"),
+			stdinRecord(1, "c"),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+
+		const records = await sendAndCollect(port, wire);
+		const stdoutContent = Buffer.concat(
+			records
+				.filter((r) => r.type === RecordType.STDOUT && r.contentData.length > 0)
+				.map((r) => r.contentData),
+		);
+		const { status, body } = parseCgiResponse(stdoutContent);
+		expect(status).toBe(200);
+		expect(body).toBe("got:abc");
+	});
+
+	it("handles empty STDIN that arrives before the PARAMS terminator", async () => {
+		await startServer(async (req) => {
+			const text = await req.text();
+			return new Response(`len:${text.length}`, { status: 200 });
+		});
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "POST",
+				REQUEST_URI: "/",
+				HTTP_HOST: `localhost:${port}`,
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+				CONTENT_LENGTH: "0",
+			}),
+			emptyRecord(RecordType.STDIN, 1),
+			emptyRecord(RecordType.PARAMS, 1),
+		]);
+
+		const records = await sendAndCollect(port, wire);
+		const stdoutContent = Buffer.concat(
+			records
+				.filter((r) => r.type === RecordType.STDOUT && r.contentData.length > 0)
+				.map((r) => r.contentData),
+		);
+		const { status, body } = parseCgiResponse(stdoutContent);
+		expect(status).toBe(200);
+		expect(body).toBe("len:0");
+	});
+
+	it("enforces maxBodyBytes for STDIN interleaved with PARAMS", async () => {
+		const errors: unknown[] = [];
+		await startServer(async (req) => new Response(await req.text()), {
+			maxBodyBytes: 4,
+			onError: (e) => {
+				errors.push(e);
+			},
+		});
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "POST",
+				REQUEST_URI: "/",
+				HTTP_HOST: `localhost:${port}`,
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+			}),
+			stdinRecord(1, "xxxxxxxx"),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+		try {
+			await sendAndCollect(port, wire);
+		} catch {
+			// socket destroy is OK
+		}
+		await new Promise((r) => setTimeout(r, 50));
+		const pe = errors.find((e): e is ProtocolError => e instanceof ProtocolError);
+		expect(pe).toBeDefined();
+		expect(String(pe?.message)).toMatch(/maxBodyBytes/);
+	});
+});
+
 describe("ABORT_REQUEST race", () => {
 	it("sends exactly one END_REQUEST when ABORT arrives mid-handler", async () => {
 		await startServer(async () => {

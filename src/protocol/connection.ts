@@ -49,6 +49,8 @@ export interface RequestState {
 	ended: boolean;
 	/** Accumulated raw bytes of PARAMS content (non-terminator chunks) for this request. */
 	paramsBytes: number;
+	/** Flush any STDIN bytes received before paramsComplete. Idempotent; no-op once flushed. */
+	flushPendingStdin: () => void;
 }
 
 /** Callbacks the connection calls upward when request lifecycle events occur. */
@@ -245,6 +247,9 @@ export class FcgiConnection {
 
 		const maxBodyBytes = this.callbacks.maxBodyBytes;
 		let bodyBytes = 0;
+		/** Non-null only while PARAMS is incomplete; buffered STDIN until the PARAMS terminator. */
+		let pendingStdin: Buffer[] | null = [];
+		let stdinEndedEarly = false;
 
 		// Build the STDIN ReadableStream plumbing
 		let stdinController!: ReadableStreamDefaultController<Uint8Array>;
@@ -287,6 +292,21 @@ export class FcgiConnection {
 			abortSignal: stdinAbort.signal,
 			ended: false,
 			paramsBytes: 0,
+			flushPendingStdin: () => {
+				if (pendingStdin === null) return;
+				const queued = pendingStdin;
+				pendingStdin = null;
+				for (const chunk of queued) {
+					pushStdinPayload(chunk);
+				}
+				if (stdinEndedEarly) {
+					try {
+						stdinController.close();
+					} catch {
+						// Already closed
+					}
+				}
+			},
 			pushStdin: (chunk) => {
 				if (maxBodyBytes !== undefined) {
 					bodyBytes += chunk.length;
@@ -300,9 +320,19 @@ export class FcgiConnection {
 						return;
 					}
 				}
+				if (!state.paramsComplete) {
+					// PARAMS terminator hasn't arrived yet — buffer so we don't pause the socket
+					// waiting for a reader that hasn't been dispatched.
+					(pendingStdin as Buffer[]).push(chunk);
+					return;
+				}
 				pushStdinPayload(chunk);
 			},
 			endStdin: () => {
+				if (!state.paramsComplete) {
+					stdinEndedEarly = true;
+					return;
+				}
 				try {
 					stdinController.close();
 				} catch {
@@ -310,6 +340,7 @@ export class FcgiConnection {
 				}
 			},
 			abort: (reason) => {
+				pendingStdin = null;
 				stdinAbort.abort(reason);
 				try {
 					stdinController.error(reason ?? new Error("Request aborted"));
@@ -334,6 +365,7 @@ export class FcgiConnection {
 		if (contentData.length === 0) {
 			req.paramsComplete = true;
 			this.callbacks.onRequest(req, this.socket);
+			req.flushPendingStdin();
 			return;
 		}
 
