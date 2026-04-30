@@ -41,7 +41,7 @@ export function buildRequest(state: RequestState): Request {
 	// ------------------------------------------------------------------
 	// Apache mod_fastcgi and some nginx configs set HTTPS=off for plain HTTP.
 	const httpsValue = params.get("HTTPS")?.toLowerCase();
-	const scheme = httpsValue && httpsValue !== "off" ? "https" : "http";
+	const scheme = httpsValue === "on" || httpsValue === "1" ? "https" : "http";
 
 	let authority = params.get("HTTP_HOST");
 	if (!authority) {
@@ -78,7 +78,7 @@ export function buildRequest(state: RequestState): Request {
 	if (contentType) headers.set("content-type", contentType);
 
 	const contentLength = params.get("CONTENT_LENGTH");
-	if (contentLength && contentLength !== "0") {
+	if (contentLength !== undefined && /^\d+$/.test(contentLength)) {
 		headers.set("content-length", contentLength);
 	}
 
