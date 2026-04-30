@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/Swatto/node-fastcgi/compare/v0.1.2...v0.1.3) (2026-04-30)
+
+
+### Performance Improvements
+
+* **hot-path:** six targeted allocations and copy eliminations ([ee644a0](https://github.com/Swatto/node-fastcgi/commit/ee644a0c74efbbbee29802e8d6b64e90de225fed))
+
 ## [0.1.2](https://github.com/Swatto/node-fastcgi/compare/v0.1.1...v0.1.2) (2026-04-30)
 
 
