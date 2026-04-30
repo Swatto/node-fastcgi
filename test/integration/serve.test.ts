@@ -529,6 +529,100 @@ describe("PARAMS edge cases", () => {
 	});
 });
 
+describe("ABORT_REQUEST race", () => {
+	it("sends exactly one END_REQUEST when ABORT arrives mid-handler", async () => {
+		await startServer(async () => {
+			await new Promise((r) => setTimeout(r, 80));
+			return new Response("late", { status: 200 });
+		});
+
+		const records = await new Promise<FcgiRecord[]>((resolve, reject) => {
+			const collected: FcgiRecord[] = [];
+			const parser = new RecordParser((r) => collected.push(r));
+			const sock = net.createConnection({ port, host: "127.0.0.1" });
+			sock.on("data", (c: Buffer) => parser.push(c));
+			sock.on("error", (e) => reject(e));
+
+			const done = () => {
+				resolve(collected);
+			};
+
+			sock.once("connect", () => {
+				sock.write(
+					Buffer.concat([
+						beginRequest(1, Role.RESPONDER, FCGI_KEEP_CONN),
+						paramsRecord(1, {
+							REQUEST_METHOD: "GET",
+							REQUEST_URI: "/",
+							SERVER_NAME: "localhost",
+							SERVER_PORT: String(port),
+						}),
+						emptyRecord(RecordType.PARAMS, 1),
+						emptyRecord(RecordType.STDIN, 1),
+					]),
+				);
+				setTimeout(() => {
+					sock.write(encodeRecord(RecordType.ABORT_REQUEST, 1, Buffer.alloc(0)));
+				}, 20);
+				setTimeout(() => {
+					sock.destroy();
+					done();
+				}, 250);
+			});
+		});
+
+		const ends = records.filter((r) => r.type === RecordType.END_REQUEST && r.requestId === 1);
+		expect(ends.length).toBe(1);
+	});
+
+	it("does not emit STDOUT after END_REQUEST when ABORT is late", async () => {
+		await startServer(async () => {
+			await new Promise((r) => setTimeout(r, 80));
+			return new Response("late", { status: 200 });
+		});
+
+		const records = await new Promise<FcgiRecord[]>((resolve, reject) => {
+			const collected: FcgiRecord[] = [];
+			const parser = new RecordParser((r) => collected.push(r));
+			const sock = net.createConnection({ port, host: "127.0.0.1" });
+			sock.on("data", (c: Buffer) => parser.push(c));
+			sock.on("error", (e) => reject(e));
+
+			const done = () => {
+				resolve(collected);
+			};
+
+			sock.once("connect", () => {
+				sock.write(
+					Buffer.concat([
+						beginRequest(1, Role.RESPONDER, FCGI_KEEP_CONN),
+						paramsRecord(1, {
+							REQUEST_METHOD: "GET",
+							REQUEST_URI: "/",
+							SERVER_NAME: "localhost",
+							SERVER_PORT: String(port),
+						}),
+						emptyRecord(RecordType.PARAMS, 1),
+						emptyRecord(RecordType.STDIN, 1),
+					]),
+				);
+				setTimeout(() => {
+					sock.write(encodeRecord(RecordType.ABORT_REQUEST, 1, Buffer.alloc(0)));
+				}, 20);
+				setTimeout(() => {
+					sock.destroy();
+					done();
+				}, 250);
+			});
+		});
+
+		const endIdx = records.findIndex((r) => r.type === RecordType.END_REQUEST && r.requestId === 1);
+		expect(endIdx).toBeGreaterThanOrEqual(0);
+		const afterEnd = records.slice(endIdx + 1);
+		expect(afterEnd.some((r) => r.type === RecordType.STDOUT)).toBe(false);
+	});
+});
+
 describe("integration edge-case regressions", () => {
 	let serverFu: ServeResult;
 	let portFu: number;

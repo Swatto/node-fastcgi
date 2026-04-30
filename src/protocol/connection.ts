@@ -109,6 +109,9 @@ export class FcgiConnection {
 	/** Total requests dispatched on this connection (for optional per-connection caps). */
 	private requestCount = 0;
 
+	/** Request IDs for which END_REQUEST was already written (idempotent `sendEndRequest`). Cleared on socket close; see `handleBeginRequest`. */
+	private readonly endedRequestIds = new Set<number>();
+
 	constructor(socket: Socket, callbacks: ConnectionCallbacks) {
 		this.socket = socket;
 		this.callbacks = callbacks;
@@ -206,6 +209,8 @@ export class FcgiConnection {
 	// ---------------------------------------------------------------------------
 
 	private handleBeginRequest(requestId: number, contentData: Buffer): void {
+		this.endedRequestIds.delete(requestId);
+
 		// Reject multiplexing (spec sec 5.5 / sec 4.1 FCGI_MPXS_CONNS=0)
 		if (this.requests.size > 0) {
 			// Don't close the socket — the existing active request's keepConn flag governs the connection.
@@ -388,6 +393,7 @@ export class FcgiConnection {
 			req.abort(new Error("Connection closed"));
 		}
 		this.requests.clear();
+		this.endedRequestIds.clear();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -400,6 +406,9 @@ export class FcgiConnection {
 		protocolStatus: ProtocolStatus,
 		opts: { forceClose?: boolean; skipClose?: boolean } = {},
 	): void {
+		if (this.endedRequestIds.has(requestId)) return;
+		this.endedRequestIds.add(requestId);
+
 		const body = Buffer.allocUnsafe(8);
 		body.writeUInt32BE(appStatus, 0);
 		body[4] = protocolStatus;

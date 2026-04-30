@@ -13,7 +13,7 @@
 
 import { STATUS_CODES } from "node:http";
 import type { Socket } from "node:net";
-import type { FcgiConnection } from "./protocol/connection.js";
+import type { FcgiConnection, RequestState } from "./protocol/connection.js";
 import { ProtocolStatus, RecordType } from "./protocol/constants.js";
 import { encodeRecord } from "./protocol/record.js";
 
@@ -24,8 +24,8 @@ const MAX_CONTENT_LENGTH = 65535;
  * Write a Web `Response` as FastCGI STDOUT/END_REQUEST records to `socket`.
  *
  * Returns a Promise that resolves when `END_REQUEST` has been fully written.
- * Always calls `conn.sendEndRequest` as the final step (which also handles
- * socket close when KEEP_CONN is not set).
+ * Calls `conn.sendEndRequest` as the final step unless `state.ended` becomes true
+ * after an interrupt (e.g. ABORT_REQUEST), in which case END was already sent.
  */
 export async function writeResponse(
 	response: Response,
@@ -33,6 +33,7 @@ export async function writeResponse(
 	appStatus: number,
 	socket: Socket,
 	conn: FcgiConnection,
+	state: RequestState,
 ): Promise<void> {
 	// ------------------------------------------------------------------
 	// Build the CGI response header block
@@ -70,6 +71,7 @@ export async function writeResponse(
 	// Write headers as first STDOUT chunk(s)
 	// ------------------------------------------------------------------
 	await writeChunked(socket, requestId, headerBlock);
+	if (state.ended) return;
 
 	// ------------------------------------------------------------------
 	// Write body
@@ -79,9 +81,11 @@ export async function writeResponse(
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
+				if (state.ended) return;
 				if (done) break;
 				if (value && value.length > 0) {
 					await writeChunked(socket, requestId, Buffer.from(value));
+					if (state.ended) return;
 				}
 			}
 		} finally {
@@ -89,10 +93,13 @@ export async function writeResponse(
 		}
 	}
 
+	if (state.ended) return;
+
 	// ------------------------------------------------------------------
 	// Empty STDOUT to terminate the stream (spec sec 6.1)
 	// ------------------------------------------------------------------
 	await socketWrite(socket, encodeRecord(RecordType.STDOUT, requestId, Buffer.alloc(0)));
+	if (state.ended) return;
 
 	// ------------------------------------------------------------------
 	// END_REQUEST

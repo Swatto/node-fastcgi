@@ -316,7 +316,7 @@ async function dispatchRequest(
 	} catch (err) {
 		options.onError?.(err);
 		const response = new Response("Bad Request", { status: 400 });
-		await writeResponse(response, requestId, 1, socket, conn);
+		await writeResponse(response, requestId, 1, socket, conn, state);
 		return;
 	}
 
@@ -406,7 +406,7 @@ async function dispatchRequest(
 	}
 
 	try {
-		await writeResponse(response, requestId, appStatus, socket, conn);
+		await writeResponse(response, requestId, appStatus, socket, conn, state);
 	} catch (err) {
 		options.onError?.(err, req);
 	}
