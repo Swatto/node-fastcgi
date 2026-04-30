@@ -25,8 +25,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
         with:
+          node-version: '24'  # Node 24 ships with npm 11+, required for OIDC trusted publishing
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest  # trusted publishing requires npm >= 11.5.1
       - run: pnpm run build
       - name: Publish to npm
         run: npm publish  # provenance is automatic via trusted publishing OIDC
