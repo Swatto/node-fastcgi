@@ -127,9 +127,9 @@ export async function writeStderr(
 	requestId: number,
 	message: string,
 ): Promise<void> {
+	if (message.length === 0) return; // honor "no terminator when nothing to write"
 	const data = Buffer.from(message, "utf8");
 	await writeChunked(socket, requestId, data, RecordType.STDERR);
-	// Terminate STDERR stream
 	await socketWrite(socket, encodeRecord(RecordType.STDERR, requestId, Buffer.alloc(0)));
 }
 
