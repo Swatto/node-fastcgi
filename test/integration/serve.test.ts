@@ -97,6 +97,25 @@ describe("GET_VALUES advertised limits", () => {
 });
 
 describe("serve() integration", () => {
+	it("enables TCP_NODELAY on accepted TCP connections", async () => {
+		const calls: Array<{ value: boolean | undefined }> = [];
+		const original = net.Socket.prototype.setNoDelay;
+		net.Socket.prototype.setNoDelay = function patched(value?: boolean) {
+			calls.push({ value });
+			return original.call(this, value);
+		};
+		try {
+			await startServer(async () => new Response("ok"));
+			const sock = net.createConnection({ port, host: "127.0.0.1" });
+			await new Promise<void>((resolve) => sock.once("connect", () => resolve()));
+			sock.destroy();
+			await new Promise((r) => setTimeout(r, 20));
+		} finally {
+			net.Socket.prototype.setNoDelay = original;
+		}
+		expect(calls.some((c) => c.value === true)).toBe(true);
+	});
+
 	it("destroys the connection when a peer dribbles bytes past maxBufferedBytes", async () => {
 		let onErrorErr: unknown;
 		await startServer(async () => new Response("ok"), {

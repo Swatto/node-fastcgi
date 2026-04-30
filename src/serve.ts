@@ -255,6 +255,12 @@ export function serve(handler: Handler, options: ServeOptions = {}): Promise<Ser
 // ---------------------------------------------------------------------------
 
 function handleConnection(socket: Socket, handler: Handler, options: ServeOptions): void {
+	// FastCGI emits many small records; TCP_NODELAY avoids 40ms Nagle stalls on
+	// response headers / END_REQUEST / stream terminators. No-op for Unix sockets.
+	if (socket.remoteAddress !== undefined) {
+		socket.setNoDelay(true);
+	}
+
 	if (options.idleTimeout) {
 		socket.setTimeout(options.idleTimeout);
 		socket.on("timeout", () => {
