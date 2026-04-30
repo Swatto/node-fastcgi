@@ -13,7 +13,32 @@ jobs:
     name: Release PR
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           release-type: node
+
+  publish:
+    name: Publish to npm
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write  # required for npm trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'  # Node 24 ships with npm 11+, required for OIDC trusted publishing
+          registry-url: https://registry.npmjs.org
+      - run: pnpm run build
+      - name: Publish to npm
+        run: npm publish  # provenance is automatic via trusted publishing OIDC
