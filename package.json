@@ -1,6 +1,6 @@
 {
   "name": "@swatto/node-fastcgi",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "FastCGI Responder library for Node.js with Web-standard Request/Response API",
   "type": "module",
   "main": "./dist/index.cjs",
