@@ -102,6 +102,7 @@ interface ServeOptions {
   maxBodyBytes?: number;      // Max FCGI_STDIN bytes per request; exceeding aborts the request (default: unlimited)
   maxParamsBytes?: number;    // Max total FCGI_PARAMS bytes per request (default: 65536)
   maxParamsCount?: number;    // Max name/value pairs per request (default: 1000)
+  maxBufferedBytes?: number;  // Max unread bytes the per-connection record parser will buffer before destroying the connection (anti-slowloris, default: 8 MiB)
   closeTimeout?: number;      // Max milliseconds `close()` waits for active connections to drain before force-destroying them (default: 5000)
   handlerTimeout?: number;    // Max milliseconds a single handler may run before being aborted (default: no timeout)
   verboseErrors?: boolean;    // When true, forward error messages to FastCGI STDERR (default: false)
@@ -119,7 +120,7 @@ interface ServeResult {
 function serve(handler: Handler, options?: ServeOptions): Promise<ServeResult>;
 ```
 
-`ServeOptions` covers transport (`port`, `host`, `socketPath`, `socketMode`, `server`, `inheritedFd`), shutdown (`signal`, `closeTimeout`), connection lifecycle (`idleTimeout`, `idleGraceMs`, `maxConnections`, `maxRequestsPerConnection`), request limits (`handlerTimeout`, `maxBodyBytes`, `maxParamsBytes`, `maxParamsCount`), peer filtering (`allowedAddresses`), diagnostics (`verboseErrors`, `onError`), and hardening defaults as noted in the comments above.
+`ServeOptions` covers transport (`port`, `host`, `socketPath`, `socketMode`, `server`, `inheritedFd`), shutdown (`signal`, `closeTimeout`), connection lifecycle (`idleTimeout`, `idleGraceMs`, `maxConnections`, `maxRequestsPerConnection`), request limits (`handlerTimeout`, `maxBodyBytes`, `maxParamsBytes`, `maxParamsCount`, `maxBufferedBytes`), peer filtering (`allowedAddresses`), diagnostics (`verboseErrors`, `onError`), and hardening defaults as noted in the comments above.
 
 `allowedAddresses` entries may be single IPs or CIDR prefixes, for example `10.0.0.0/8`, `192.168.1.0/24`, or `::1/128` alongside literal addresses like `127.0.0.1`.
 
@@ -252,6 +253,7 @@ For production, consider:
 - `idleTimeout` — close stalled keep-alive connections (e.g. `60_000`).
 - `maxConnections` and `maxRequestsPerConnection` — bound resource usage.
 - `maxBodyBytes` — bound request body memory (e.g. `10 * 1024 * 1024`).
+- `maxBufferedBytes` — defaults to 8 MiB; lower it (e.g. `1024 * 1024`) if you only ever expect small records and want a tighter slowloris cap.
 - `socketMode: 0o660` and `allowedAddresses` — restrict who can talk to the FastCGI process.
 - `verboseErrors: false` (default) — keep stack traces out of the web-server error log.
 
