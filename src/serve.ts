@@ -136,6 +136,21 @@ export interface ServeResult {
 // ---------------------------------------------------------------------------
 
 export function serve(handler: Handler, options: ServeOptions = {}): Promise<ServeResult> {
+	const transportCount = [
+		options.server,
+		options.inheritedFd,
+		options.socketPath,
+		options.port,
+	].filter((v) => v !== undefined).length;
+	if (transportCount > 1) {
+		return Promise.reject(
+			new TypeError(
+				"serve(): only one transport option may be specified at a time " +
+					"(server, inheritedFd, socketPath, or port)",
+			),
+		);
+	}
+
 	return new Promise<ServeResult>((resolve, reject) => {
 		const server = options.server ?? createServer();
 

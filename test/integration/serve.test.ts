@@ -50,6 +50,19 @@ afterEach(async () => {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe("serve() options validation", () => {
+	it("rejects when more than one transport option is specified", async () => {
+		const handler = async () => new Response("ok");
+		await expect(serve(handler, { port: 9000, socketPath: "/tmp/test.sock" })).rejects.toThrow(
+			TypeError,
+		);
+		await expect(serve(handler, { port: 9000, inheritedFd: 0 })).rejects.toThrow(TypeError);
+		await expect(serve(handler, { socketPath: "/tmp/test.sock", inheritedFd: 0 })).rejects.toThrow(
+			TypeError,
+		);
+	});
+});
+
 describe("serve() integration", () => {
 	it("responds to a simple GET request (spec example B.1)", async () => {
 		await startServer(async (req) => {
