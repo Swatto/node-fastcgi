@@ -46,18 +46,10 @@ export async function writeResponse(
 	headerLines.push(`Status: ${response.status} ${statusText}`);
 
 	// Emit Set-Cookie headers separately (they can't be merged into one line).
-	// Older `Headers` lacks `getSetCookie`; emit a single stripped folded line instead.
-	const hasCookieAPI = typeof response.headers.getSetCookie === "function";
-	const setCookies = hasCookieAPI ? response.headers.getSetCookie() : [];
+	const setCookies = response.headers.getSetCookie();
 
 	for (const [name, value] of response.headers.entries()) {
-		if (name.toLowerCase() === "set-cookie") {
-			if (!hasCookieAPI) {
-				// Fallback: emit the folded value as-is (may contain multiple cookies joined by ", ")
-				headerLines.push(`${stripCTL(name)}: ${stripCTL(value)}`);
-			}
-			continue;
-		}
+		if (name.toLowerCase() === "set-cookie") continue; // emitted separately below
 		headerLines.push(`${stripCTL(name)}: ${stripCTL(value)}`);
 	}
 	for (const cookie of setCookies) {

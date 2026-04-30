@@ -487,6 +487,79 @@ describe("serve() integration", () => {
 	});
 });
 
+describe("Set-Cookie handling", () => {
+	it("emits multiple Set-Cookie headers as separate lines when values contain commas", async () => {
+		await startServer(async () => {
+			const headers = new Headers();
+			headers.append("set-cookie", "a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT");
+			headers.append("set-cookie", "b=2; Path=/");
+			return new Response("ok", { status: 200, headers });
+		});
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "GET",
+				REQUEST_URI: "/",
+				HTTP_HOST: `localhost:${port}`,
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+			}),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+		const records = await sendAndCollect(port, wire);
+		const stdoutContent = Buffer.concat(
+			records
+				.filter((r) => r.type === RecordType.STDOUT && r.contentData.length > 0)
+				.map((r) => r.contentData),
+		);
+		const headerSection = stdoutContent.toString("utf8").split("\r\n\r\n")[0] ?? "";
+		const cookieLines = headerSection
+			.split("\r\n")
+			.filter((l) => l.toLowerCase().startsWith("set-cookie:"));
+		expect(cookieLines).toHaveLength(2);
+		expect(cookieLines).toContain("set-cookie: a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT");
+		expect(cookieLines).toContain("set-cookie: b=2; Path=/");
+	});
+
+	it("includes other headers alongside Set-Cookie", async () => {
+		await startServer(async () => {
+			const headers = new Headers();
+			headers.append("set-cookie", "a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT");
+			headers.append("set-cookie", "b=2; Path=/");
+			headers.set("x-custom", "yes");
+			return new Response("ok", { status: 200, headers });
+		});
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "GET",
+				REQUEST_URI: "/",
+				HTTP_HOST: `localhost:${port}`,
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+			}),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+		const records = await sendAndCollect(port, wire);
+		const stdoutContent = Buffer.concat(
+			records
+				.filter((r) => r.type === RecordType.STDOUT && r.contentData.length > 0)
+				.map((r) => r.contentData),
+		);
+		const headerSection = stdoutContent.toString("utf8").split("\r\n\r\n")[0] ?? "";
+		const lines = headerSection.split("\r\n");
+		expect(lines.some((l) => l.toLowerCase() === "x-custom: yes")).toBe(true);
+		const cookieLines = lines.filter((l) => l.toLowerCase().startsWith("set-cookie:"));
+		expect(cookieLines).toHaveLength(2);
+		expect(cookieLines).toContain("set-cookie: a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT");
+		expect(cookieLines).toContain("set-cookie: b=2; Path=/");
+	});
+});
+
 describe("PARAMS edge cases", () => {
 	it("ignores duplicate empty PARAMS after terminator (single handler run, one END_REQUEST, one STDOUT terminator)", async () => {
 		let handlerInvocations = 0;
