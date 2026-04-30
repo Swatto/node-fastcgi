@@ -70,19 +70,37 @@ export async function writeResponse(
 	// ------------------------------------------------------------------
 	if (response.body) {
 		const reader = response.body.getReader();
+		let abortReason: unknown;
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
-				if (state.ended) return;
+				if (state.ended) {
+					abortReason = new Error("Request ended before response body was fully written");
+					break;
+				}
 				if (done) break;
 				if (value && value.length > 0) {
 					await writeChunked(socket, requestId, Buffer.from(value));
-					if (state.ended) return;
+					if (state.ended) {
+						abortReason = new Error("Request ended before response body was fully written");
+						break;
+					}
 				}
 			}
+		} catch (err) {
+			abortReason = err;
+			throw err;
 		} finally {
+			if (abortReason !== undefined) {
+				try {
+					await reader.cancel(abortReason as Error);
+				} catch {
+					// ignore — we're already in a teardown path
+				}
+			}
 			reader.releaseLock();
 		}
+		if (state.ended) return;
 	}
 
 	if (state.ended) return;

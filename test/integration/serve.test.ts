@@ -487,6 +487,60 @@ describe("serve() integration", () => {
 	});
 });
 
+describe("response body cleanup", () => {
+	it("cancels the response body stream when the socket is destroyed mid-stream", async () => {
+		let cancelled!: () => void;
+		const cancelPromise = new Promise<void>((resolve) => {
+			cancelled = resolve;
+		});
+
+		await startServer(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					const interval = setInterval(() => {
+						try {
+							controller.enqueue(new TextEncoder().encode("chunk\n"));
+						} catch {
+							clearInterval(interval);
+						}
+					}, 10);
+				},
+				cancel() {
+					cancelled();
+				},
+			});
+			return new Response(stream, { status: 200, headers: { "content-type": "text/plain" } });
+		});
+
+		const sock = net.createConnection({ port, host: "127.0.0.1" });
+		await new Promise((r) => sock.once("connect", r));
+		sock.write(
+			Buffer.concat([
+				beginRequest(1, Role.RESPONDER),
+				paramsRecord(1, {
+					REQUEST_METHOD: "GET",
+					REQUEST_URI: "/",
+					HTTP_HOST: `localhost:${port}`,
+					SERVER_NAME: "localhost",
+					SERVER_PORT: String(port),
+				}),
+				emptyRecord(RecordType.PARAMS, 1),
+				emptyRecord(RecordType.STDIN, 1),
+			]),
+		);
+		// Wait for some data to flow, then kill the socket.
+		await new Promise<void>((r) => sock.once("data", () => r()));
+		sock.destroy();
+
+		await Promise.race([
+			cancelPromise,
+			new Promise<void>((_, rej) =>
+				setTimeout(() => rej(new Error("cancel was not called within 1s")), 1000),
+			),
+		]);
+	});
+});
+
 describe("Set-Cookie handling", () => {
 	it("emits multiple Set-Cookie headers as separate lines when values contain commas", async () => {
 		await startServer(async () => {
