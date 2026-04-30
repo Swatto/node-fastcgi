@@ -303,6 +303,10 @@ export class FcgiConnection {
 	}
 
 	private handleParams(req: RequestState, contentData: Buffer): void {
+		if (req.paramsComplete) {
+			return;
+		}
+
 		const maxParamsBytes = this.callbacks.maxParamsBytes ?? 65536;
 		const maxParamsCount = this.callbacks.maxParamsCount ?? 1000;
 

@@ -437,6 +437,66 @@ describe("serve() integration", () => {
 	});
 });
 
+describe("PARAMS edge cases", () => {
+	it("ignores duplicate empty PARAMS after terminator (single handler run, one END_REQUEST, one STDOUT terminator)", async () => {
+		let handlerInvocations = 0;
+		await startServer(async () => {
+			handlerInvocations++;
+			return new Response("ok", { status: 200 });
+		});
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "GET",
+				REQUEST_URI: "/",
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+				HTTP_HOST: `localhost:${port}`,
+			}),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.PARAMS, 1),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+
+		const records = await sendAndCollect(port, wire);
+
+		expect(handlerInvocations).toBe(1);
+		expect(records.filter((r) => r.type === RecordType.END_REQUEST).length).toBe(1);
+		expect(
+			records.filter((r) => r.type === RecordType.STDOUT && r.contentData.length === 0).length,
+		).toBe(1);
+	});
+
+	it("ignores non-empty PARAMS after terminator (REQUEST_URI not overwritten)", async () => {
+		await startServer(async (req) => new Response(req.url, { status: 200 }));
+
+		const wire = Buffer.concat([
+			beginRequest(1, Role.RESPONDER),
+			paramsRecord(1, {
+				REQUEST_METHOD: "GET",
+				REQUEST_URI: "/orig",
+				SERVER_NAME: "localhost",
+				SERVER_PORT: String(port),
+				HTTP_HOST: `localhost:${port}`,
+			}),
+			emptyRecord(RecordType.PARAMS, 1),
+			paramsRecord(1, { REQUEST_URI: "/replaced" }),
+			emptyRecord(RecordType.STDIN, 1),
+		]);
+
+		const records = await sendAndCollect(port, wire);
+		const stdoutContent = Buffer.concat(
+			records
+				.filter((r) => r.type === RecordType.STDOUT && r.contentData.length > 0)
+				.map((r) => r.contentData),
+		);
+		const { body } = parseCgiResponse(stdoutContent);
+		expect(body).toContain("/orig");
+		expect(body).not.toContain("/replaced");
+	});
+});
+
 describe("integration edge-case regressions", () => {
 	let serverFu: ServeResult;
 	let portFu: number;
