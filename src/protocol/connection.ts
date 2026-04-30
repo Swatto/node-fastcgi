@@ -63,6 +63,9 @@ export interface ConnectionCallbacks {
 	/** Called when any non-recoverable error occurs on the connection. */
 	onError?: (err: Error) => void;
 
+	/** Forwarded to RecordParser; see RecordParserOptions.maxBufferedBytes. Default 8 MiB. */
+	maxBufferedBytes?: number;
+
 	/**
 	 * Maximum total bytes accepted in a single request body (FCGI_STDIN).
 	 * Requests exceeding this limit are aborted and the connection is destroyed.
@@ -115,7 +118,12 @@ export class FcgiConnection {
 	constructor(socket: Socket, callbacks: ConnectionCallbacks) {
 		this.socket = socket;
 		this.callbacks = callbacks;
-		this.parser = new RecordParser((record) => this.handleRecord(record));
+		this.parser = new RecordParser(
+			(record) => this.handleRecord(record),
+			callbacks.maxBufferedBytes !== undefined
+				? { maxBufferedBytes: callbacks.maxBufferedBytes }
+				: undefined,
+		);
 
 		socket.on("data", (chunk: Buffer) => {
 			try {

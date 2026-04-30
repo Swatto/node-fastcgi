@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ProtocolError } from "../../src/errors.js";
 import { FCGI_HEADER_LEN, FCGI_VERSION_1, RecordType } from "../../src/protocol/constants.js";
 import { encodeRecord, RecordParser } from "../../src/protocol/record.js";
 
@@ -112,5 +113,38 @@ describe("RecordParser", () => {
 		// Push rest
 		parser.push(wire.subarray(4));
 		expect(parser.bufferedBytes).toBe(0);
+	});
+});
+
+describe("RecordParser maxBufferedBytes", () => {
+	it("default cap is 8 MiB", () => {
+		const parser = new RecordParser(() => {});
+		const big = Buffer.alloc(8 * 1024 * 1024 + 1, 0);
+		expect(() => parser.push(big)).toThrow(ProtocolError);
+	});
+
+	it("honors a custom maxBufferedBytes (strict > cap)", () => {
+		const parser = new RecordParser(() => {}, { maxBufferedBytes: 4 });
+		parser.push(Buffer.alloc(2));
+		parser.push(Buffer.alloc(2));
+		expect(() => parser.push(Buffer.from([0]))).toThrow(ProtocolError);
+	});
+
+	it("re-allows pushes after a complete record drains below the cap", () => {
+		const parser = new RecordParser(() => {}, { maxBufferedBytes: 16 });
+		const first = encodeRecord(RecordType.STDOUT, 1, Buffer.from("x"));
+		parser.push(first);
+		expect(parser.bufferedBytes).toBe(0);
+
+		const tiny = encodeRecord(RecordType.STDOUT, 1, Buffer.alloc(0));
+		expect(tiny.length).toBe(FCGI_HEADER_LEN);
+
+		parser.push(tiny.subarray(0, 7));
+		expect(parser.bufferedBytes).toBe(7);
+		parser.push(tiny.subarray(7));
+		expect(parser.bufferedBytes).toBe(0);
+
+		parser.push(tiny.subarray(0, 7));
+		expect(() => parser.push(Buffer.alloc(10))).toThrow(ProtocolError);
 	});
 });

@@ -97,6 +97,24 @@ describe("GET_VALUES advertised limits", () => {
 });
 
 describe("serve() integration", () => {
+	it("destroys the connection when a peer dribbles bytes past maxBufferedBytes", async () => {
+		let onErrorErr: unknown;
+		await startServer(async () => new Response("ok"), {
+			maxBufferedBytes: 32,
+			onError: (e) => {
+				onErrorErr = e;
+			},
+		});
+
+		const sock = net.createConnection({ port, host: "127.0.0.1" });
+		await new Promise((r) => sock.once("connect", r));
+		sock.write(Buffer.alloc(40, 0));
+		await new Promise<void>((resolve) => sock.once("close", resolve));
+		expect(onErrorErr).toBeInstanceOf(ProtocolError);
+		expect(String((onErrorErr as Error).message)).toMatch(/maxBufferedBytes/);
+		sock.destroy();
+	});
+
 	it("responds to a simple GET request (spec example B.1)", async () => {
 		await startServer(async (req) => {
 			return new Response(`Hello from ${new URL(req.url).pathname}`, {

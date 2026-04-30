@@ -91,6 +91,11 @@ export interface ServeOptions {
 	/** Maximum number of name/value pairs accepted per request. Default: 1000. */
 	maxParamsCount?: number;
 	/**
+	 * Maximum unread bytes buffered by the per-connection record parser before
+	 * the connection is destroyed (anti-slowloris). Default: 8 MiB.
+	 */
+	maxBufferedBytes?: number;
+	/**
 	 * Maximum milliseconds to wait for active connections to drain after `close()`.
 	 * After the timeout, remaining sockets are force-destroyed. Default: 5000 (5 s).
 	 */
@@ -291,6 +296,9 @@ function handleConnection(socket: Socket, handler: Handler, options: ServeOption
 		...(options.maxBodyBytes !== undefined ? { maxBodyBytes: options.maxBodyBytes } : {}),
 		...(options.maxParamsBytes !== undefined ? { maxParamsBytes: options.maxParamsBytes } : {}),
 		...(options.maxParamsCount !== undefined ? { maxParamsCount: options.maxParamsCount } : {}),
+		...(options.maxBufferedBytes !== undefined
+			? { maxBufferedBytes: options.maxBufferedBytes }
+			: {}),
 		...(options.maxConnections !== undefined
 			? { maxConcurrentConnections: options.maxConnections }
 			: {}),

@@ -63,6 +63,16 @@ export function encodeRecord(
 
 type RecordCallback = (record: FcgiRecord) => void;
 
+export interface RecordParserOptions {
+	/**
+	 * Maximum unread bytes the parser will keep in internal chunks before
+	 * throwing a ProtocolError. Protects against slowloris-style peers that
+	 * dribble bytes without ever completing a record.
+	 * Default: 8 MiB.
+	 */
+	maxBufferedBytes?: number;
+}
+
 /**
  * Stateful parser that reassembles FastCGI records from a stream of raw
  * Buffer chunks (e.g. from a TCP socket's `data` events).
@@ -77,6 +87,7 @@ type RecordCallback = (record: FcgiRecord) => void;
  */
 export class RecordParser {
 	private readonly onRecord: RecordCallback;
+	private readonly maxBufferedBytes: number;
 
 	/** Pending input chunks, consumed from the front. */
 	private chunks: Buffer[] = [];
@@ -92,14 +103,20 @@ export class RecordParser {
 	private currentContentLength = 0;
 	private currentPaddingLength = 0;
 
-	constructor(onRecord: RecordCallback) {
+	constructor(onRecord: RecordCallback, options?: RecordParserOptions) {
 		this.onRecord = onRecord;
+		this.maxBufferedBytes = options?.maxBufferedBytes ?? 8 * 1024 * 1024;
 	}
 
 	push(chunk: Buffer): void {
 		if (chunk.length > 0) {
 			this.chunks.push(chunk);
 			this.totalBytes += chunk.length;
+			if (this.totalBytes > this.maxBufferedBytes) {
+				throw new ProtocolError(
+					`RecordParser: buffered bytes (${this.totalBytes}) exceeds maxBufferedBytes (${this.maxBufferedBytes})`,
+				);
+			}
 		}
 		this.drain();
 	}
