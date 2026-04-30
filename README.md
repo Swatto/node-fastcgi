@@ -1,6 +1,6 @@
 # node-fastcgi
 
-A FastCGI Responder library for Node.js with a **Web-standard `Request`/`Response` API**.
+A FastCGI Responder library for Node.js with a **Web-standard `Request`/`Response` API** with zero dependencies.
 
 The handler signature is identical to the [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API), so switching between a regular HTTP server and FastCGI is a one-line change.
 
